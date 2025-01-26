@@ -19,7 +19,9 @@ pc = Pinecone(
 index = pc.Index("courses-vector-database")
 
 # Add embeddings
-embeddings = OpenAIEmbeddings()
+embeddings = OpenAIEmbeddings(
+    openai_api_key=st.secrets['OPENAI_API_KEY']
+)
 
 # Create vectorstore with embeddings
 vectorstore = PineconeVectorStore(
@@ -52,4 +54,6 @@ qa = RetrievalQA.from_chain_type(
 # Example query
 query = "all courses in mechanical semester 1?"
 result = qa.invoke(query)
-print(result)
+
+
+st.title("🦜🔗 PDEU Courses Chatbot")
