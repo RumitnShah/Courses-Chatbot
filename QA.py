@@ -51,12 +51,15 @@ qa = RetrievalQA.from_chain_type(
     # return_source_documents=True  # Shows source of information
 )
 
-st.title("🦜🔗 PDEU Courses Chatbot")
+st.title("PDEU Courses Chatbot 🤖")
+
+description = """Crafted with care by [Rumit Shah]](https://www.linkedin.com/in/rumit-shah-537076303?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app) ❤. Explore the magic on [Github](https://github.com/RumitnShah/Courses-Chatbot/tree/main)"""
+st.markdown(description, unsafe_allow_html=True)
 
 with st.form("my_form"):
     text = st.text_area(
-        "Enter text:",
-        "What are the courses in semester 1 of mechanical engineering?",
+        "Enter your question:",
+        "E.g What are the courses in semester 1 of mechanical engineering?",
     )
     submitted = st.form_submit_button("Submit")
 
@@ -64,4 +67,4 @@ query = text
 result = qa.invoke(query)
 
 if submitted:
-    st.info("result")
+    st.info(result)
