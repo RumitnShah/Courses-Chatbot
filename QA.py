@@ -6,6 +6,7 @@ from langchain_community.embeddings import OpenAIEmbeddings
 import os
 from dotenv import load_dotenv
 import streamlit as st
+import logging
 
 # print(st.secrets['PINECONE_API_KEY'])
 # load_dotenv(dotenv_path=r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\.env")
@@ -53,7 +54,7 @@ qa = RetrievalQA.from_chain_type(
 
 st.title("PDEU Courses Chatbot 🤖")
 
-description = """Crafted with care by [Rumit Shah]](https://www.linkedin.com/in/rumit-shah-537076303?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app) ❤. Explore the magic on [Github](https://github.com/RumitnShah/Courses-Chatbot/tree/main)"""
+description = """Crafted with care by [Rumit Shah](https://www.linkedin.com/in/rumit-shah-537076303?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app) ❤. Explore the magic on [Github](https://github.com/RumitnShah/Courses-Chatbot/tree/main)"""
 st.markdown(description, unsafe_allow_html=True)
 
 with st.form("my_form"):
@@ -64,7 +65,11 @@ with st.form("my_form"):
     submitted = st.form_submit_button("Submit")
 
 query = text
-result = qa.invoke(query)
+try:
+    result = qa.invoke(query)
+except Exception as e:
+    logging.error(f"Embedding generation error: {e}")
+    st.error("Sorry, there was an issue processing your query.")
 
 if submitted:
     st.info(result)
