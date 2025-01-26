@@ -6,7 +6,7 @@ from langchain_community.embeddings import OpenAIEmbeddings
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\.env")
 
 if "PINECONE_API_KEY" not in os.environ:
     raise ValueError("Please set PINECONE_API_KEY in your .env file")
