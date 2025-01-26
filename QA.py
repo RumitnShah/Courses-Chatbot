@@ -5,14 +5,16 @@ from pinecone import Pinecone
 from langchain_community.embeddings import OpenAIEmbeddings
 import os
 from dotenv import load_dotenv
+import streamlit as st
 
-load_dotenv(dotenv_path=r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\.env")
+# print(st.secrets['PINECONE_API_KEY'])
+# load_dotenv(dotenv_path=r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\.env")
 
-if "PINECONE_API_KEY" not in os.environ:
-    raise ValueError("Please set PINECONE_API_KEY in your .env file")
+# if "PINECONE_API_KEY" not in os.environ:
+#     raise ValueError("Please set PINECONE_API_KEY in your .env file")
 # Initialize Pinecone
 pc = Pinecone(
-    api_key=os.environ["PINECONE_API_KEY"]
+    api_key=st.secrets['PINECONE_API_KEY']
 )
 index = pc.Index("courses-vector-database")
 
