@@ -4,7 +4,9 @@ from langchain_pinecone import Pinecone as PineconeVectorStore
 from pinecone import Pinecone
 from langchain_openai import OpenAIEmbeddings
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 if "PINECONE_API_KEY" not in os.environ:
     raise ValueError("Please set PINECONE_API_KEY in your .env file")
