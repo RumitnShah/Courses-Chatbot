@@ -1,6 +1,6 @@
 from langchain_openai import ChatOpenAI
 from langchain.chains import RetrievalQA
-from langchain_pinecone import PineconeVectorStore
+from langchain_pinecone import Pinecone as PineconeVectorStore
 from pinecone import Pinecone
 from langchain_openai import OpenAIEmbeddings
 import os
