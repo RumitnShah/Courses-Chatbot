@@ -51,9 +51,17 @@ qa = RetrievalQA.from_chain_type(
     # return_source_documents=True  # Shows source of information
 )
 
-# Example query
-query = "all courses in mechanical semester 1?"
+st.title("🦜🔗 PDEU Courses Chatbot")
+
+with st.form("my_form"):
+    text = st.text_area(
+        "Enter text:",
+        "What are the courses in semester 1 of mechanical engineering?",
+    )
+    submitted = st.form_submit_button("Submit")
+
+query = text
 result = qa.invoke(query)
 
-
-st.title("🦜🔗 PDEU Courses Chatbot")
+if submitted:
+    st.info("result")
