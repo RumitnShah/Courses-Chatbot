@@ -7,7 +7,7 @@ import cohere
 from langchain_cohere import CohereEmbeddings
 from langchain.chains import RetrievalQA
 # from langchain_community.chat_models import CohereChat
-from langchain.llms import Cohere as CohereLLM 
+from langchain_community.llms import Cohere as CohereLLM 
 import streamlit as st
 import logging
 
@@ -73,17 +73,46 @@ st.markdown(description, unsafe_allow_html=True)
 
 with st.form("my_form"):
     text = st.text_area(
-        "Enter your question:",
-        "E.g What are the courses in semester 1 of mechanical engineering?",
+        "Enter your question related to syllabus:",
+        placeholder = "E.g What are the courses in semester 1 of mechanical engineering?",
     )
     submitted = st.form_submit_button("Submit")
 
 query = text
 try:
     result = qa.invoke(query)
+
+    # Extract and clean the answer
+    if isinstance(result, dict):
+        answer = result.get('result', '')
+    elif isinstance(result, str):
+        answer = result
+    else:
+        answer = str(result)
+        
+        # Clean the answer:
+        # 1. Remove JSON formatting characters
+        # 2. Convert literal \n to actual newlines
+        # 3. Remove any extra whitespace
+    answer = (
+        answer.replace('{', '')
+        .replace('}', '')
+        .replace('"', '')
+        .replace('\\n', '\n')  # Convert \n to actual newlines
+        .strip()
+    )
+        
+        # Display the clean answer
+    if answer:
+        st.write("Answer:")
+            # Using markdown to properly render newlines
+        st.markdown(answer)
+    else:
+        st.warning("No answer found for your question.")
+            
 except Exception as e:
     logging.error(f"Embedding generation error: {e}")
     st.error("Sorry, there was an issue processing your query.")
 
-if submitted:
-    st.info(result)
+# if submitted:
+#     st.info(result.get('result', 'No result found'))
