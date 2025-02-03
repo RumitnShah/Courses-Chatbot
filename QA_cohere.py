@@ -10,6 +10,7 @@ from langchain.chains import RetrievalQA
 from langchain_community.llms import Cohere as CohereLLM 
 import streamlit as st
 import logging
+from langchain.prompts import PromptTemplate
 
 load_dotenv()
 
@@ -32,9 +33,9 @@ vectorstore = PineconeVectorStore(
 retriever = vectorstore.as_retriever(
     search_type="mmr",
     search_kwargs={
-        "k": 50,
-        "fetch_k": 40,
-        "lambda_mult": 0.7
+        "k": 50,    # Number of documents to retrieve
+        "fetch_k": 40,      # Number of documents to return
+        "lambda_mult": 0.7      # Lambda multiplier for MMR
     }
 )
 
@@ -56,7 +57,20 @@ qa = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",
     retriever=retriever,
+    chain_type_kwargs={
+        "prompt": PromptTemplate(
+            template="""You are a helpful AI assistant for PDEU course information. 
+            Always respond in a english, clear, concise, and friendly manner. 
+            If the information is not in the context, say "I don't have enough information to answer that."
+
+            Context: {context}
+
+            Question: {question}
+            Helpful Answer:""",
+            input_variables=["context", "question"]
+        ),
     # return_source_documents=True  # Shows source of information
+    }
 )
 
 # # Define the question
@@ -74,7 +88,7 @@ st.markdown(description, unsafe_allow_html=True)
 with st.form("my_form"):
     text = st.text_area(
         "Enter your question related to syllabus:",
-        placeholder = "E.g What are the courses in semester 1 of mechanical engineering?",
+        placeholder = "E.g What are the courses in semester 1 of computer engineering?",
     )
     submitted = st.form_submit_button("Submit")
 
@@ -89,30 +103,24 @@ try:
         answer = result
     else:
         answer = str(result)
-        
-        # Clean the answer:
-        # 1. Remove JSON formatting characters
-        # 2. Convert literal \n to actual newlines
-        # 3. Remove any extra whitespace
+
     answer = (
-        answer.replace('{', '')
-        .replace('}', '')
-        .replace('"', '')
-        .replace('\\n', '\n')  # Convert \n to actual newlines
+        answer.replace('{', '') # Remove JSON formatting characters
+        .replace('}', '')   
+        .replace('"', '')      
+        .replace('\\n', '\n')  # Convert literal \n to actual newlines
         .strip()
     )
-        
+
+    if submitted:    
         # Display the clean answer
-    if answer:
-        st.write("Answer:")
+        if answer:
+            st.write("Answer:")
             # Using markdown to properly render newlines
-        st.markdown(answer)
-    else:
-        st.warning("No answer found for your question.")
-            
+            st.markdown(answer)
+        else:
+            st.warning("No answer found for your question.")
+                
 except Exception as e:
     logging.error(f"Embedding generation error: {e}")
     st.error("Sorry, there was an issue processing your query.")
-
-# if submitted:
-#     st.info(result.get('result', 'No result found'))
