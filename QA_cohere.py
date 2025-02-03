@@ -118,6 +118,7 @@ try:
             st.write("Answer:")
             # Using markdown to properly render newlines
             st.markdown(answer)
+            st.write("Sometimes LLM can Hallucinate the answer.")
         else:
             st.warning("No answer found for your question.")
                 
