@@ -26,7 +26,7 @@ redis_client = redis.Redis(
     host=host, port=port, password=password, decode_responses=True
 )
 
-index = pc.Index("courses-db")
+index = pc.Index("course-database")
 
 # Initialize embeddings
 embeddings = HuggingFaceEmbeddings()
@@ -42,8 +42,8 @@ vectorstore = PineconeVectorStore(
 retriever = vectorstore.as_retriever(
     search_type="mmr",
     search_kwargs={
-        "k": 20,    # Number of documents to retrieve
-        "fetch_k": 20,      # Number of documents to return
+        "k": 32,    # Number of documents to retrieve
+        "fetch_k": 32,      # Number of documents to return
         "lambda_mult": 0.7      # Lambda multiplier for MMR
     }
 )
@@ -71,6 +71,7 @@ qa = RetrievalQA.from_chain_type(
             4. Always mention the section or page number where you found the information, if available.
             5. If there is any ambiguity, say so clearly.
             6. Only provide names of subjects, courses, or professors if they are explicitly mentioned in the context.
+            7. Only provide information based on question asked.
 
             Context: {context}
 
@@ -116,7 +117,7 @@ def check_rate_limit():
     rate_limit_key = f"rate_limit_{user_ip}"
     request_count = redis_client.get(rate_limit_key)
 
-    MAX_REQUESTS_PER_DAY = 20  # Set the daily query limit
+    MAX_REQUESTS_PER_DAY = 200  # Set the daily query limit
 
     if request_count is None:
         redis_client.set(rate_limit_key, 1, ex=86400)  # 1 day expiry
@@ -144,7 +145,8 @@ with st.form("my_form"):
     
     selected_question = st.selectbox(
         "Select your question:",
-        questions
+        questions,
+        label_visibility="collapsed"
     )
     # Text area for custom question
     if selected_question == "Write your own question below":
