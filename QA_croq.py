@@ -128,15 +128,42 @@ def check_rate_limit():
         redis_client.incr(rate_limit_key)
 
 with st.form("my_form"):
-    text = st.text_area(
-        "Enter your question related to syllabus:",
-        placeholder = "E.g What are the courses in semester 1 of computer engineering?",
+    # text = st.text_area(
+    #     "Enter your question related to syllabus:",
+    #     placeholder = "E.g What are the courses in semester 1 of computer engineering?",
+    # )
+    # submitted = st.form_submit_button("Submit")
+
+    questions = [
+        "Write your own question below",
+        "What are the courses in Computer Engineering semester 1?",
+        "What are the courses in Mechanical semester 2?",
+        "What is the duration of the Biotechnology?",
+        "What are the courses for Information Technology?"
+    ]
+    
+    selected_question = st.selectbox(
+        "Select your question:",
+        questions
+    )
+    # Text area for custom question
+    if selected_question == "Write your own question below":
+        custom_question = st.text_area(
+            "Write your own question:",
+            placeholder="Enter your custom question here..."
     )
     submitted = st.form_submit_button("Submit")
 
 if submitted:  
     check_rate_limit()  # Check user's rate limit  
-    query = text
+    if selected_question == "Write your own question below":
+        if custom_question.strip():  # Check if custom question is not empty
+            query = custom_question
+        else:
+            st.error("Please either select a question or write your own")
+    else:
+        query = selected_question
+
     try:
         # Check if the answer is already cached in Redis
         redis_key = f"query:{query}"
@@ -184,8 +211,7 @@ if submitted:
             st.markdown(f"- Source PDF: [{source_path}]({source_url})")
 
         # User rates the answer
-        st.markdown("- **Rate the provided answer {1=Worst, 10=Excellent}**")
-        answer_ratings = st.slider("", 1, 10)
+        answer_ratings = st.slider("**Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10)
 
         # Cache answer in Redis if rating is above 7
         if answer_ratings > 7 and not cached_answer:
