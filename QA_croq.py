@@ -136,29 +136,29 @@ with st.form("my_form"):
     # submitted = st.form_submit_button("Submit")
 
     questions = [
-        "Write your own question below",
+        "Formulate your own question below",
         "What are the courses in Computer Engineering semester 1?",
         "What are the courses in Mechanical semester 2?",
         "What is the duration of the Biotechnology?",
         "What are the courses for Information Technology?"
     ]
-    
+
     selected_question = st.selectbox(
         "Select your question:",
         questions,
-        label_visibility="collapsed"
+        label_visibility="visible"
     )
     # Text area for custom question
-    if selected_question == "Write your own question below":
+    if selected_question == "Formulate your own question below":
         custom_question = st.text_area(
-            "Write your own question:",
+            "Enter your query here:",
             placeholder="Enter your custom question here..."
     )
     submitted = st.form_submit_button("Submit")
 
 if submitted:  
     check_rate_limit()  # Check user's rate limit  
-    if selected_question == "Write your own question below":
+    if selected_question == "Formulate your own question below":
         if custom_question.strip():  # Check if custom question is not empty
             query = custom_question
         else:
@@ -213,7 +213,7 @@ if submitted:
             st.markdown(f"- Source PDF: [{source_path}]({source_url})")
 
         # User rates the answer
-        answer_ratings = st.slider("**Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10)
+        answer_ratings = st.slider("# **Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10)
 
         # Cache answer in Redis if rating is above 7
         if answer_ratings > 7 and not cached_answer:
