@@ -8,7 +8,6 @@ from langchain_community.vectorstores import Pinecone as LangchainPinecone
 from typing_extensions import Concatenate
 from pinecone import Pinecone, ServerlessSpec
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_groq import ChatGroq
 
 # Load environment variables
 load_dotenv()
@@ -39,33 +38,33 @@ docs = [Document(page_content=raw_text)]
 
 # Split text into chunks
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=0,
+    chunk_size=1500,
+    chunk_overlap=150,
     length_function=len,
 )
 texts = text_splitter.split_documents(docs)
 
 # Create metadata with source information
 documents_with_sources = []
-web_url = "sample_url"
+web_url = "web_url"
 for doc in texts:
     doc.metadata = {
-        "source": doc.metadata.get("source", "Name_of_source"),  # Original PDF path
+        "source": doc.metadata.get("source", "Course_Name"),  # Original PDF path
         "source_url": web_url,  # Clickable file URL
         "text": doc.page_content,
     }
     documents_with_sources.append(doc)
 
 # Initialize embeddings
-embeddings = HuggingFaceEmbeddings()
+embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
 
 # Create or get existing index
-index_name = "courses-db"
+index_name = "course-database"
 existing_indexes = pc.list_indexes().names()
 if index_name not in existing_indexes:
     pc.create_index(
         name=index_name,
-        dimension=768,
+        dimension=1024,
         metric='cosine',
         spec=ServerlessSpec(
             cloud='aws',

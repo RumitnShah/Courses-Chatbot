@@ -29,7 +29,7 @@ redis_client = redis.Redis(
 index = pc.Index("course-database")
 
 # Initialize embeddings
-embeddings = HuggingFaceEmbeddings()
+embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
 
 # Create vectorstore instance for the existing index
 vectorstore = PineconeVectorStore(
@@ -40,18 +40,17 @@ vectorstore = PineconeVectorStore(
 
 # Set up retriever with MMR search
 retriever = vectorstore.as_retriever(
-    search_type="mmr",
+    search_type="mmr",  # Using similarity search instead of MMR
     search_kwargs={
-        "k": 32,    # Number of documents to retrieve
-        "fetch_k": 32,      # Number of documents to return
-        "lambda_mult": 0.7      # Lambda multiplier for MMR
+        "k": 15, 
+        "lambda_mult": 0.8  # Lower lambda_mult for more diverse results
     }
 )
 
-# Initialize Cohere client for generation
+# Initialize Groq Cloud for generation
 llm = ChatGroq(
-    model = "deepseek-r1-distill-llama-70b",
-    temperature = 0.7,
+    model = "deepseek-r1-distill-llama-70b",   
+    temperature = 0.3,  # Lower temperature for more conservative answers
     api_key = os.environ['GROQ_API_KEY']
 )
 
@@ -62,25 +61,25 @@ qa = RetrievalQA.from_chain_type(
     retriever=retriever,
     chain_type_kwargs={
         "prompt": PromptTemplate(
-            template="""You are an expert assistant. Your task is to answer questions based solely on the context provided in the PDF sources. 
-
-            STRICT RULES:
-            1. Only use information directly from the context.
-            2. If the information is not found, respond with: "I cannot find the specific information in the provided sources."
-            3. Do NOT guess, infer, or fabricate any information.
-            4. Always mention the section or page number where you found the information, if available.
-            5. If there is any ambiguity, say so clearly.
-            6. Only provide names of subjects, courses, or professors if they are explicitly mentioned in the context.
-            7. Only provide information based on question asked.
-
+            template="""You are an expert academic advisor specializing in curriculum information. 
+                    Your task is to find and present semester-specific course information.
+            input_variables=["context", "question"],
             Context: {context}
 
             Question: {question}
-            Helpful Answer:""",
-            input_variables=["context", "question"]
+
+            Follow these steps:
+            1. First, identify the specific semester and program mentioned in the question
+            2. Search the context for an EXACT match of that semester and program
+            3. If found, list all courses for that specific semester
+            4. If not found but similar information exists, explain what was found
+            5. Include course codes and names exactly as they appear
+            6. Format the response in an easy-to-read manner
+
+            Helpful Answer:"""
         ),
     # return_source_documents=True  # Shows source of information
-    }
+    },
 )
 
 # # Define the question
@@ -108,7 +107,7 @@ def get_ip():
     try:
         return socket.gethostbyname(socket.gethostname())  # Local network IP
     except:
-        return "unknown"
+        return "IP Address not available"
 
 
 # Rate Limiting Per User (Based on IP Address)
@@ -165,7 +164,13 @@ if submitted:
             st.error("Please either select a question or write your own")
     else:
         query = selected_question
-
+# #
+#     docs = vectorstore.similarity_search(query, k=3)
+#     st.write("Debug: Retrieved Documents")
+#     for i, doc in enumerate(docs):
+#         st.write(f"\nDocument {i+1}:")
+#         st.write(doc.page_content[:200])
+# #
     try:
         # Check if the answer is already cached in Redis
         redis_key = f"query:{query}"
