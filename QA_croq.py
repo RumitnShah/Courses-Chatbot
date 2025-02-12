@@ -26,7 +26,7 @@ redis_client = redis.Redis(
     host=host, port=port, password=password, decode_responses=True
 )
 
-index = pc.Index("course-database")
+index = pc.Index("course-vec-database")
 
 # Initialize embeddings
 embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
@@ -102,6 +102,10 @@ For security and privacy, avoid using public WiFi while chatting with this bot.
 **Recommendation**: Use a personal or secure mobile network for the best experience. 🔒✅
 """, unsafe_allow_html=True)
 
+# Initialize session state for question history
+if "qa_history" not in st.session_state:
+    st.session_state.qa_history = []
+
 # Get user's IP address
 def get_ip():
     try:
@@ -128,11 +132,6 @@ def check_rate_limit():
         redis_client.incr(rate_limit_key)
 
 with st.form("my_form"):
-    # text = st.text_area(
-    #     "Enter your question related to syllabus:",
-    #     placeholder = "E.g What are the courses in semester 1 of computer engineering?",
-    # )
-    # submitted = st.form_submit_button("Submit")
 
     questions = [
         "Formulate your own question below",
@@ -164,13 +163,7 @@ if submitted:
             st.error("Please either select a question or write your own")
     else:
         query = selected_question
-# #
-#     docs = vectorstore.similarity_search(query, k=3)
-#     st.write("Debug: Retrieved Documents")
-#     for i, doc in enumerate(docs):
-#         st.write(f"\nDocument {i+1}:")
-#         st.write(doc.page_content[:200])
-# #
+
     try:
         # Check if the answer is already cached in Redis
         redis_key = f"query:{query}"
@@ -191,7 +184,6 @@ if submitted:
 
             # Remove the thinking part (anything between <think> and </think>)
             answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL)
-
             answer = (
                 answer.replace('{', '') # Remove JSON formatting characters
                 .replace('}', '')   
@@ -199,6 +191,9 @@ if submitted:
                 .replace('\\n', '\n')  # Convert literal \n to actual newlines
                 .strip()
             )
+        
+        if query != "Formulate your own question below":
+            st.session_state.qa_history.append({"question": query, "answer": answer})
 
         # Display the clean answer
         if answer:
@@ -218,7 +213,7 @@ if submitted:
             st.markdown(f"- Source PDF: [{source_path}]({source_url})")
 
         # User rates the answer
-        answer_ratings = st.slider("# **Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10)
+        answer_ratings = st.slider("**Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10)
 
         # Cache answer in Redis if rating is above 7
         if answer_ratings > 7 and not cached_answer:
@@ -229,3 +224,14 @@ if submitted:
     except Exception as e:
         logging.error(f"Embedding generation error: {e}")
         st.error("Sorry, there was an issue processing your query.")
+
+if st.session_state.qa_history:
+    # Display all previous questions and answers
+    st.write("### Previous Questions and Answers")
+    for qa_pair in st.session_state.qa_history:
+        st.write(f"**Question:** {qa_pair['question']}")
+        st.write(f"**Answer:** {qa_pair['answer']}")
+        st.markdown("-----------------------------")
+
+else:
+    st.write("##### No previous questions and answers to display.")
