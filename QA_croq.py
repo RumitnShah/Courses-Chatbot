@@ -12,6 +12,7 @@ from langchain_groq import ChatGroq
 import re
 import redis
 import socket
+import random
 
 load_dotenv()
 
@@ -26,7 +27,7 @@ redis_client = redis.Redis(
     host=host, port=port, password=password, decode_responses=True
 )
 
-index = pc.Index("course-vec-database")
+index = pc.Index("revised-courses-database")
 
 # Initialize embeddings
 embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
@@ -43,7 +44,7 @@ retriever = vectorstore.as_retriever(
     search_type="mmr",  # Using similarity search instead of MMR
     search_kwargs={
         "k": 15, 
-        "lambda_mult": 0.8  # Lower lambda_mult for more diverse results
+        "lambda_mult": 0.9  # Lower lambda_mult for more diverse results
     }
 )
 
@@ -72,7 +73,7 @@ qa = RetrievalQA.from_chain_type(
             1. First, identify the specific semester and program mentioned in the question
             2. Search the context for an EXACT match of that semester and program
             3. If found, list all courses for that specific semester
-            4. If not found but similar information exists, explain what was found
+            4. If not found display an error message
             5. Include course codes and names exactly as they appear
             6. Format the response in an easy-to-read manner
 
@@ -136,9 +137,10 @@ with st.form("my_form"):
     questions = [
         "Formulate your own question below",
         "What are the courses in Computer Engineering semester 1?",
-        "What are the courses in Mechanical semester 2?",
+        "Provide details for Engineering Metallurgy course",
         "What is the duration of the Biotechnology?",
-        "What are the courses for Information Technology?"
+        "What are the courses for Information Communication Technology semester 4?",
+        "What are the details of Inorganic Chemistry Lab-2 course?"
     ]
 
     selected_question = st.selectbox(
@@ -154,46 +156,54 @@ with st.form("my_form"):
     )
     submitted = st.form_submit_button("Submit")
 
-if submitted:  
-    check_rate_limit()  # Check user's rate limit  
-    if selected_question == "Formulate your own question below":
-        if custom_question.strip():  # Check if custom question is not empty
-            query = custom_question
-        else:
-            st.error("Please either select a question or write your own")
-    else:
-        query = selected_question
+# Read funny loading messages
+with open("loading_messages.txt", "r") as f:
+    loading_messages = f.readlines()
 
-    try:
-        # Check if the answer is already cached in Redis
-        redis_key = f"query:{query}"
-        cached_answer = redis_client.get(redis_key)
-        
-        if cached_answer:
-            answer = cached_answer
-        else:
-            result = qa.invoke(query)
+if submitted: 
+    try: 
+        loading_message = random.choice(loading_messages)
+        # Adding loading message
+        with st.spinner(text=loading_message):
 
-            # Extract and clean the answer
-            if isinstance(result, dict):
-                answer = result.get('result', '')
-            elif isinstance(result, str):
-                answer = result
+            check_rate_limit()  # Check user's rate limit  
+            if selected_question == "Formulate your own question below":
+                if custom_question.strip():  # Check if custom question is not empty
+                    query = custom_question
+                else:
+                    st.error("Please either select a question or write your own")
             else:
-                answer = str(result)
+                query = selected_question
 
-            # Remove the thinking part (anything between <think> and </think>)
-            answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL)
-            answer = (
-                answer.replace('{', '') # Remove JSON formatting characters
-                .replace('}', '')   
-                .replace('"', '')      
-                .replace('\\n', '\n')  # Convert literal \n to actual newlines
-                .strip()
-            )
-        
-        if query != "Formulate your own question below":
-            st.session_state.qa_history.append({"question": query, "answer": answer})
+            # Check if the answer is already cached in Redis
+            redis_key = f"query:{query}"
+            cached_answer = redis_client.get(redis_key)
+            
+            if cached_answer:
+                answer = cached_answer
+            else:
+                result = qa.invoke(query)
+
+                # Extract and clean the answer
+                if isinstance(result, dict):
+                    answer = result.get('result', '')
+                elif isinstance(result, str):
+                    answer = result
+                else:
+                    answer = str(result)
+
+                # Remove the thinking part (anything between <think> and </think>)
+                answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL)
+                answer = (
+                    answer.replace('{', '') # Remove JSON formatting characters
+                    .replace('}', '')   
+                    .replace('"', '')      
+                    .replace('\\n', '\n')  # Convert literal \n to actual newlines
+                    .strip()
+                )
+            
+            if query != "Formulate your own question below":
+                st.session_state.qa_history.append({"question": query, "answer": answer})
 
         # Display the clean answer
         if answer:
@@ -202,10 +212,10 @@ if submitted:
             st.markdown(answer)
 
         # Perform similarity search
-        search_results = vectorstore.similarity_search(query, k=2)
+        search_results = vectorstore.similarity_search(query, k=1)  # Get top 3 search results
 
         # Print sources for the query
-        for i, doc in enumerate(search_results, 1):
+        for i, doc in enumerate(search_results, 1): # Loop through search results
             source_path = doc.metadata.get('source', 'Source not available')
             source_url = doc.metadata.get('source_url', 'source')
         
@@ -229,8 +239,8 @@ if st.session_state.qa_history:
     # Display all previous questions and answers
     st.write("### Previous Questions and Answers")
     for qa_pair in st.session_state.qa_history:
-        st.write(f"**Question:** {qa_pair['question']}")
-        st.write(f"**Answer:** {qa_pair['answer']}")
+        st.write(f"🤖 **Question:** {qa_pair['question']}")
+        st.write(f"✨ **Answer:** {qa_pair['answer']}")
         st.markdown("-----------------------------")
 
 else:

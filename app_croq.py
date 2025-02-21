@@ -21,7 +21,7 @@ if "GROQ_API_KEY" not in os.environ:
 pc = Pinecone(
     api_key=os.environ["PINECONE_API_KEY"]
 )
-pdf_path = r"sample.pdf"
+pdf_path = r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\Revised Syllabus\B.Sc Chemistry.pdf"
 # Read PDF
 pdf_reader = PdfReader(pdf_path)
 
@@ -46,10 +46,10 @@ texts = text_splitter.split_documents(docs)
 
 # Create metadata with source information
 documents_with_sources = []
-web_url = "web_url"
+web_url = "https://drive.google.com/file/d/1sFRv61kdHEPUWRJ-gNb2f39F1BFdvp7j/view?usp=sharing"
 for doc in texts:
     doc.metadata = {
-        "source": doc.metadata.get("source", "Course_Name"),  # Original PDF path
+        "source": doc.metadata.get("source", "B.Sc Chemistry Course Structure"),  # Original PDF path
         "source_url": web_url,  # Clickable file URL
         "text": doc.page_content,
     }
@@ -59,7 +59,7 @@ for doc in texts:
 embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
 
 # Create or get existing index
-index_name = "course-database"
+index_name = "revised-courses-database"
 existing_indexes = pc.list_indexes().names()
 if index_name not in existing_indexes:
     pc.create_index(
