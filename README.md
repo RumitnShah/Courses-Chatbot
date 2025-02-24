@@ -46,26 +46,26 @@ Run the following script to process and embed course PDFs:
 ```bash
 python app_croq.py
 ```
-    - Create the account on Pinecone and get the API key.
+- Create the account on Pinecone and get the API key.
 
-    - Add your pdf path in the given line
-    ```bash
-    pdf_path = "pdfs/BSc_Chemistry.pdf"
-    ```
-    - Ensure metadata includes relevant details like source URL:
-    ```bash
-    doc.metadata = {"source": pdf_path, "source_url": web_url}
-    ```
+- Add your pdf path in the given line
+```bash
+pdf_path = "pdfs/BSc_Chemistry.pdf"
+```
+- Ensure metadata includes relevant details like source URL:
+```bash
+doc.metadata = {"source": pdf_path, "source_url": web_url}
+```
 2. Running the Chatbot Locally
 Launch the chatbot with Streamlit:
 ```bash
 streamlit run chatbot.py
 ```
-    - Create the account on Croq and get the API key.
+- Create the account on Croq and get the API key.
 
-    - Create the account on Redis to store the user's data and get the API key. This will be used to store the results of the user's query and will not forward the same query to the Croq API.
+- Create the account on Redis to store the user's data and get the API key. This will be used to store the results of the user's query and will not forward the same query to the Croq API.
 
-    - Create the account on Streamlit to deploy the app. Store the API keys in the .env file as follows. Try editing the file ```.example.env``` to ```.env``` once the necessary information is stored.
+- Create the account on Streamlit to deploy the app. Store the API keys in the .env file as follows. Try editing the file ```.example.env``` to ```.env``` once the necessary information is stored.
 
 ## Purpose
 The purpose of this chatbot is to provide a helpful resource for students and faculty seeking quick and accurate information about university courses. This chatbot was created with the intention of benefiting the academic community by making course details easily accessible.
@@ -82,7 +82,7 @@ You can reach out to me via [Gmail](mailto:rumitshahn@gmail.com) or [LinkedIn](h
 ## Powered by
 This example is powered by the following services:
 
-Hugging Face (Embedding Model)
-Croq Cloud (AI API)
-Redis (Database)
-Streamlit (App Deployment)
+- Hugging Face (Embedding Model)
+- Croq Cloud (AI API)
+- Redis (Database)
+- Streamlit (App Deployment)
