@@ -1,65 +1,70 @@
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
-import streamlit as st
 import os
 from dotenv import load_dotenv
 from langchain.chains import RetrievalQA
-import streamlit as st
 import logging
 from langchain.prompts import PromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
+import streamlit as st
 import re
 import redis
 import socket
 import random
+from collections import Counter
 
-load_dotenv()
+# Load environment variables from .env file
+load_dotenv(override=True)
 
-# Initialize Pinecone connection
+# Initialize Pinecone connection using API key
 pc = Pinecone(api_key=os.environ['PINECONE_API_KEY'])
 
+# Load Redis connection details from environment variables
 host = os.environ.get("REDIS_HOST")
 port = os.environ.get("REDIS_PORT")
 password = os.environ.get("REDIS_PASSWORD")
 
+# Initialize Redis client for caching and rate-limiting
 redis_client = redis.Redis(
     host=host, port=port, password=password, decode_responses=True
 )
 
-index = pc.Index("revised-courses-database")
+# Connect to the Pinecone index
+index = pc.Index("course-database")
 
-# Initialize embeddings
+# Initialize embeddings model for vector search
 embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
 
-# Create vectorstore instance for the existing index
+# Create a vector store instance using Pinecone
 vectorstore = PineconeVectorStore(
     index=index,
     embedding=embeddings,
     text_key="text"
 )
 
-# Set up retriever with MMR search
+# Set up retriever with MMR (Maximal Marginal Relevance) search
 retriever = vectorstore.as_retriever(
-    search_type="mmr",  # Using similarity search instead of MMR
+    search_type="mmr", 
     search_kwargs={
-        "k": 15, 
+        "k": 15,    # Number of documents to fetch
         "lambda_mult": 0.9  # Lower lambda_mult for more diverse results
     }
 )
 
-# Initialize Groq Cloud for generation
+# Initialize LLM model using Groq API
 llm = ChatGroq(
     model = "deepseek-r1-distill-llama-70b",   
-    temperature = 0.3,  # Lower temperature for more conservative answers
+    temperature = 0.3,  # Lower temperature for more deterministic answers
     api_key = os.environ['GROQ_API_KEY']
 )
 
-# Create QA chain with more detailed parameters
+# Define the QA system using RetrievalQA
 qa = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",
     retriever=retriever,
+    return_source_documents=True,
     chain_type_kwargs={
         "prompt": PromptTemplate(
             template="""You are an expert academic advisor specializing in curriculum information. 
@@ -79,21 +84,17 @@ qa = RetrievalQA.from_chain_type(
 
             Helpful Answer:"""
         ),
-    # return_source_documents=True  # Shows source of information
     },
 )
 
-# # Define the question
-# question = "which are the courses in cse semester 1?"
-# result = qa.invoke(question)
-# print(result)
-
+# Set up the Streamlit UI
 st.title("PDEU Courses Chatbot 🤖")
 
+# Display author and GitHub link
 description = """Crafted with care by [Rumit Shah](https://www.linkedin.com/in/rumit-shah-537076303?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app) 💙. Explore the magic on [Github](https://github.com/RumitnShah/Courses-Chatbot/tree/main)"""
 st.markdown(description, unsafe_allow_html=True)
 
-# Important Notice
+# Display important security notice
 st.markdown("""
 🚨 **Important Notice:**
 
@@ -103,11 +104,11 @@ For security and privacy, avoid using public WiFi while chatting with this bot.
 **Recommendation**: Use a personal or secure mobile network for the best experience. 🔒✅
 """, unsafe_allow_html=True)
 
-# Initialize session state for question history
+# Initialize session state for storing previous questions and answers
 if "qa_history" not in st.session_state:
     st.session_state.qa_history = []
 
-# Get user's IP address
+# Function to get user's IP address
 def get_ip():
     try:
         return socket.gethostbyname(socket.gethostname())  # Local network IP
@@ -115,7 +116,7 @@ def get_ip():
         return "IP Address not available"
 
 
-# Rate Limiting Per User (Based on IP Address)
+# Function to check rate limit per user
 def check_rate_limit():
     user_ip = get_ip()
     rate_limit_key = f"rate_limit_{user_ip}"
@@ -132,23 +133,27 @@ def check_rate_limit():
             st.stop()
         redis_client.incr(rate_limit_key)
 
+# Define the user input form
 with st.form("my_form"):
 
+    # Predefined questions for quick selection
     questions = [
         "Formulate your own question below",
-        "What are the courses in Computer Engineering semester 1?",
+        "What are the courses in Computer Science and Engineering semester 1?",
+        "Are there elective specialization in computer engineering?",
+        "Total credits in the first year of Computer Science Engineering?",
         "Provide details for Engineering Metallurgy course",
-        "What is the duration of the Biotechnology?",
-        "What are the courses for Information Communication Technology semester 4?",
-        "What are the details of Inorganic Chemistry Lab-2 course?"
+        "What are all the courses for Mechanical Engineering semester 4?",
+        "What are the details of Electronics Devices and Circuits course?"
     ]
-
+    
     selected_question = st.selectbox(
         "Select your question:",
         questions,
         label_visibility="visible"
     )
-    # Text area for custom question
+
+    # Allow user to enter custom question
     if selected_question == "Formulate your own question below":
         custom_question = st.text_area(
             "Enter your query here:",
@@ -156,7 +161,7 @@ with st.form("my_form"):
     )
     submitted = st.form_submit_button("Submit")
 
-# Read funny loading messages
+# Read funny loading messages from a file
 with open("loading_messages.txt", "r") as f:
     loading_messages = f.readlines()
 
@@ -175,7 +180,7 @@ if submitted:
             else:
                 query = selected_question
 
-            # Check if the answer is already cached in Redis
+            # Check Redis cache for previous answer
             redis_key = f"query:{query}"
             cached_answer = redis_client.get(redis_key)
             
@@ -201,9 +206,6 @@ if submitted:
                     .replace('\\n', '\n')  # Convert literal \n to actual newlines
                     .strip()
                 )
-            
-            if query != "Formulate your own question below":
-                st.session_state.qa_history.append({"question": query, "answer": answer})
 
         # Display the clean answer
         if answer:
@@ -212,15 +214,24 @@ if submitted:
             st.markdown(answer)
 
         # Perform similarity search
-        search_results = vectorstore.similarity_search(query, k=1)  # Get top 3 search results
+        search_results = vectorstore.similarity_search(query, k=5)  # Get top 5 search results
 
-        # Print sources for the query
-        for i, doc in enumerate(search_results, 1): # Loop through search results
-            source_path = doc.metadata.get('source', 'Source not available')
-            source_url = doc.metadata.get('source_url', 'source')
-        
-        if source_path:
-            st.markdown(f"- Source PDF: [{source_path}]({source_url})")
+        # Extract sources and count occurrences
+        source_counts = Counter((doc.metadata.get('source', 'Unknown'), doc.metadata.get('source_url', 'No URL')) 
+                        for doc in search_results)
+
+        # Get the most common (source, URL) pair
+        if source_counts:
+            (most_common_source, most_common_url), _ = source_counts.most_common(1)[0]  # Unpacking the most frequent tuple
+
+            # Markdown format for hyperlink
+            source_display = f"- Source PDF: [{most_common_source}]({most_common_url})"
+            st.markdown(source_display, unsafe_allow_html=True)  # Display hyperlink
+        else:
+            st.markdown("- No source available.")
+
+        if query != "Formulate your own question below":
+            st.session_state.qa_history.append({"question": query, "answer": answer, "sources": source_display})
 
         # User rates the answer
         answer_ratings = st.slider("**Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10)
@@ -241,6 +252,7 @@ if st.session_state.qa_history:
     for qa_pair in st.session_state.qa_history:
         st.write(f"🤖 **Question:** {qa_pair['question']}")
         st.write(f"✨ **Answer:** {qa_pair['answer']}")
+        st.write(f"📚 {qa_pair['sources']}")
         st.markdown("-----------------------------")
 
 else:

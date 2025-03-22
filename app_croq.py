@@ -1,80 +1,84 @@
-# from langchain.chains import RetrievalQA
 import os
 from PyPDF2 import PdfReader
 from langchain.schema import Document
 from dotenv import load_dotenv
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Pinecone as LangchainPinecone
-from typing_extensions import Concatenate
 from pinecone import Pinecone, ServerlessSpec
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
+# Ensure necessary API keys are set
 if "PINECONE_API_KEY" not in os.environ:
     raise ValueError("Please set PINECONE_API_KEY in your .env file")
 if "GROQ_API_KEY" not in os.environ:
     raise ValueError("Please set GROQ_API_KEY in your .env file")
 
-# Initialize Pinecone
+# Initialize Pinecone client
 pc = Pinecone(
     api_key=os.environ["PINECONE_API_KEY"]
 )
-pdf_path = r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\Revised Syllabus\B.Sc Chemistry.pdf"
-# Read PDF
+
+# Path to the PDF file containing course syllabus
+pdf_path = r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\Revised Syllabus\Mechanical.pdf"
+
+# Read the PDF file
 pdf_reader = PdfReader(pdf_path)
 
-# Extract text from PDF
+# Extract text from all pages of the PDF
 raw_text = ""
 for i,page in enumerate(pdf_reader.pages):
     content = page.extract_text()
     if content:
-        raw_text += content
-# print(raw_text)
+        raw_text += content     # Append extracted text
 
-# Create document
+# Create a Document object with extracted text
 docs = [Document(page_content=raw_text)]
 
-# Split text into chunks
+# Split the extracted text into smaller chunks for efficient retrieval
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1500,
-    chunk_overlap=150,
+    chunk_size=1500,    # Maximum size of each chunk
+    chunk_overlap=150,  # Overlap between chunks to maintain context
     length_function=len,
 )
 texts = text_splitter.split_documents(docs)
 
-# Create metadata with source information
+# Define a source URL for reference
 documents_with_sources = []
-web_url = "https://drive.google.com/file/d/1sFRv61kdHEPUWRJ-gNb2f39F1BFdvp7j/view?usp=sharing"
+web_url = "https://drive.google.com/file/d/1cqzriPtgSKh1fP9tHYQvM8pvSKgSEksj/view?usp=sharing"
+
+# Add metadata to each document chunk
 for doc in texts:
     doc.metadata = {
-        "source": doc.metadata.get("source", "B.Sc Chemistry Course Structure"),  # Original PDF path
-        "source_url": web_url,  # Clickable file URL
-        "text": doc.page_content,
+        "source": doc.metadata.get("source", "B.Tech Mechanical Engineering Course Structure"),  # Original PDF path
+        "source_url": web_url,  # Provide file URL
+        "text": doc.page_content,   # Store chunk content
     }
     documents_with_sources.append(doc)
 
-# Initialize embeddings
+# Initialize embeddings model for vectorization
 embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
 
 # Create or get existing index
-index_name = "revised-courses-database"
+index_name = "course-database"
 existing_indexes = pc.list_indexes().names()
-if index_name not in existing_indexes:
+if index_name not in existing_indexes:  # Create a new Pinecone index if not present
     pc.create_index(
         name=index_name,
-        dimension=1024,
-        metric='cosine',
+        dimension=1024, # Dimension of embeddings
+        metric='cosine',    # Similarity metric for retrieval
         spec=ServerlessSpec(
             cloud='aws',
             region='us-east-1'
         )
     )
 
+# Connect to the Pinecone index
 index = pc.Index(index_name)
 
-# Initialize Pinecone vectorstore
+# Initialize Pinecone vector store with the processed documents
 vectorstore = LangchainPinecone.from_documents(
     documents_with_sources,
     embedding=embeddings,
@@ -83,8 +87,12 @@ vectorstore = LangchainPinecone.from_documents(
 
 print("Embeddings added to Pinecone")
 
-# # Initialize LLM with increased max_tokens
-# llm = ChatOpenAI(model="gpt-3.5-turbo", max_tokens=4000, temperature=0.3)
+# # Initialize LLM model using Groq API
+# llm = ChatGroq(
+#     model = "deepseek-r1-distill-llama-70b",   
+#     temperature = 0.3,  # Lower temperature for more deterministic answers
+#     api_key = os.environ['GROQ_API_KEY']
+# )
 
 # # Create QA chain
 # qa = RetrievalQA.from_chain_type(
