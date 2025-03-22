@@ -42,7 +42,7 @@ pip install -r requirements.txt
 
 ## Usage
 1. Embedding PDFs into Pinecone
-Run the following script to process and embed course PDFs:
+- Run the following script to process and embed course PDFs:
 ```bash
 python app_croq.py
 ```
@@ -50,14 +50,14 @@ python app_croq.py
 
 - Add your pdf path in the given line
 ```bash
-pdf_path = "pdfs/BSc_Chemistry.pdf"
+pdf_path = "pdfs/sample.pdf"
 ```
 - Ensure metadata includes relevant details like source URL:
 ```bash
 doc.metadata = {"source": pdf_path, "source_url": web_url}
 ```
 2. Running the Chatbot Locally
-Launch the chatbot with Streamlit:
+- Launch the chatbot with Streamlit:
 ```bash
 streamlit run chatbot.py
 ```
