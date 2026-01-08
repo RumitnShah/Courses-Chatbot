@@ -159,6 +159,7 @@ with st.form("my_form"):
         placeholder="Enter your custom question here...",
         disabled=selected_question != "Formulate your own question below"
     )
+    st.markdown("Reload the page to write a custom question.")
     submitted = st.form_submit_button("Submit")
 
 # Read funny loading messages from a file
