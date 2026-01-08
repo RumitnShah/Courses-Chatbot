@@ -54,7 +54,7 @@ retriever = vectorstore.as_retriever(
 
 # Initialize LLM model using Groq API
 llm = ChatGroq(
-    model = "llama-3.1-70b-versatile",   
+    model = "llama-3.3-70b-versatile",   
     temperature = 0.3,  # Lower temperature for more deterministic answers
     api_key = os.environ['GROQ_API_KEY']
 )
