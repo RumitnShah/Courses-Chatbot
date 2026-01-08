@@ -154,8 +154,8 @@ with st.form("my_form"):
     )
 
     st.markdown(
-        "<p style='text-align: center;'>"
-        "Reload the page to write a custom question if disabled."
+        "<p style='text-align: center; font-size: 13px'>"
+        "OR"
         "</p>",
         unsafe_allow_html=True
     )
