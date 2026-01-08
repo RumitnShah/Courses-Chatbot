@@ -154,10 +154,10 @@ with st.form("my_form"):
     )
 
     # Allow user to enter custom question
-    if selected_question == "Formulate your own question below":
-        custom_question = st.text_area(
-            "Enter your query here:",
-            placeholder="Enter your custom question here..."
+    custom_question = st.text_area(
+        "Enter your query here:",
+        placeholder="Enter your custom question here...",
+        disabled=selected_question != "Formulate your own question below"
     )
     submitted = st.form_submit_button("Submit")
 
