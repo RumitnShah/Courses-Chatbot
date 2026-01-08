@@ -245,6 +245,7 @@ if submitted:
     except Exception as e:
         logging.error(f"Embedding generation error: {e}")
         st.error("Sorry, there was an issue processing your query.")
+        st.error(str(e))
 
 if st.session_state.qa_history:
     # Display all previous questions and answers
