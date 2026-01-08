@@ -153,13 +153,20 @@ with st.form("my_form"):
         label_visibility="visible"
     )
 
+    st.markdown(
+        "<p style='text-align: center;'>"
+        "Reload the page to write a custom question if disabled."
+        "</p>",
+        unsafe_allow_html=True
+    )
+
     # Allow user to enter custom question
     custom_question = st.text_area(
         "Enter your query here:",
         placeholder="Enter your custom question here...",
         disabled=selected_question != "Formulate your own question below"
     )
-    st.markdown("Reload the page to write a custom question.")
+    st.caption("Reload the page to write a custom question if disabled.")
     submitted = st.form_submit_button("Submit")
 
 # Read funny loading messages from a file
