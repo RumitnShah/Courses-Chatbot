@@ -2,17 +2,18 @@ from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone
 import os
 from dotenv import load_dotenv
-from langchain.chains import RetrievalQA
 import logging
 from langchain.prompts import PromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_groq import ChatGroq
 import streamlit as st
 import re
 import redis
 import socket
 import random
 from collections import Counter
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -52,40 +53,64 @@ retriever = vectorstore.as_retriever(
     }
 )
 
-# Initialize LLM model using Groq API
-llm = ChatGroq(
-    model = "qwen/qwen3.6-27b",   
-    temperature = 0.3,  # Lower temperature for more deterministic answers
-    api_key = os.environ['GROQ_API_KEY']
+# Initialize LLM model using Google Gemini API
+gemini_api_key = os.environ.get("GEMINI_API_KEY")
+if not gemini_api_key:
+    raise ValueError("❌ GEMINI_API_KEY not found in .env file")
+
+llm = ChatGoogleGenerativeAI(
+    model="gemini-3.6-flash",
+    temperature=0.3,
+    api_key=gemini_api_key
 )
 
-# Define the QA system using RetrievalQA
-qa = RetrievalQA.from_chain_type(
-    llm=llm,
-    chain_type="stuff",
-    retriever=retriever,
-    return_source_documents=True,
-    chain_type_kwargs={
-        "prompt": PromptTemplate(
-            template="""You are an expert academic advisor specializing in curriculum information. 
-                    Your task is to find and present semester-specific course information.
-            input_variables=["context", "question"],
-            Context: {context}
+# Define the prompt template
+prompt_template = PromptTemplate(
+    template="""You are an expert academic advisor specializing in curriculum information.
 
-            Question: {question}
+    Your task is to find and present semester-specific course information.
 
-            Follow these steps:
-            1. First, identify the specific semester and program mentioned in the question
-            2. Search the context for an EXACT match of that semester and program
-            3. If found, list all courses for that specific semester
-            4. If not found display an error message
-            5. Include course codes and names exactly as they appear
-            6. Format the response in an easy-to-read manner
+    Context:
+    {context}
 
-            Helpful Answer:"""
-        ),
-    },
+    Question:
+    {question}
+
+    Follow these steps:
+    1. First, identify the specific semester and program mentioned in the question.
+    2. Search the context for an EXACT match of that semester and program.
+    3. If found, list all courses for that specific semester.
+    4. If not found, clearly state that the information was not found in the provided context.
+    5. Include course codes and names exactly as they appear.
+    6. Format the response in an easy-to-read manner.
+
+    Helpful Answer:""",
+    input_variables=["context", "question"]
 )
+
+# Create a custom chain function that mimics RetrievalQA behavior
+def run_qa_chain(question):
+    """Run QA chain with document retrieval"""
+    # Retrieve documents
+    docs = retriever.get_relevant_documents(question)
+    # Format context from documents
+    context = "\n\n".join([doc.page_content for doc in docs])
+    # Create the prompt
+    prompt = prompt_template.format(context=context, question=question)
+    # Get response from LLM
+    response = llm.invoke(prompt)
+    # Return result in RetrievalQA format
+    return {
+        "result": response.content if hasattr(response, 'content') else str(response),
+        "source_documents": docs
+    }
+
+# Create a wrapper object that mimics qa.invoke()
+class QAChain:
+    def invoke(self, query):
+        return run_qa_chain(query)
+
+qa = QAChain()
 
 # Set up the Streamlit UI
 st.title("PDEU Courses Chatbot 🤖")
