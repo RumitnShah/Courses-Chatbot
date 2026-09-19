@@ -35,12 +35,8 @@ redis_client = redis.Redis(
 index = pc.Index("course-database")
 
 # Initialize embeddings model for vector search
-# Use a lighter model for better compatibility with Streamlit Cloud / CPU-only hosting.
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    model_kwargs={"device": "cpu"},
-    encode_kwargs={"normalize_embeddings": True},
-)
+# Keep the original higher-dimensional model to match a 1024-dimension Pinecone index.
+embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
 
 # Create a vector store instance using Pinecone
 vectorstore = PineconeVectorStore(
