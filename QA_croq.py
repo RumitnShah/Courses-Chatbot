@@ -1,6 +1,7 @@
 import os
 import re
 import random
+import math
 import logging
 from collections import Counter
 
@@ -8,6 +9,7 @@ import redis
 import streamlit as st
 from dotenv import load_dotenv
 from pinecone import Pinecone
+from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langchain_pinecone import PineconeVectorStore
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -56,13 +58,16 @@ def load_embeddings():
 
 
 @st.cache_resource(show_spinner=False)
-def load_vectorstore():
+def load_index():
     pinecone_api_key = get_secret("PINECONE_API_KEY")
     if not pinecone_api_key:
         raise ValueError("PINECONE_API_KEY not found in .env file or Streamlit secrets")
-    pc = Pinecone(api_key=pinecone_api_key)
-    index = pc.Index(INDEX_NAME)
-    return PineconeVectorStore(index=index, embedding=load_embeddings(), text_key="text")
+    return Pinecone(api_key=pinecone_api_key).Index(INDEX_NAME)
+
+
+@st.cache_resource(show_spinner=False)
+def load_vectorstore():
+    return PineconeVectorStore(index=load_index(), embedding=load_embeddings(), text_key="text")
 
 
 @st.cache_resource(show_spinner=False)
@@ -91,14 +96,141 @@ vectorstore = load_vectorstore()
 llm = load_llm()
 redis_client = load_redis()
 
-# Set up retriever with MMR (Maximal Marginal Relevance) search
-retriever = vectorstore.as_retriever(
-    search_type="mmr",
-    search_kwargs={
-        "k": 15,            # Number of documents to fetch
-        "lambda_mult": 0.9  # Lower lambda_mult for more diverse results
-    }
-)
+# ---------------------------------------------------------------------------
+# Hybrid retrieval = embedding search + keyword (BM25) search.
+#
+# Embedding search alone ranks the right chunk poorly for questions like
+# "semester 1" because the syllabus PDFs say "Semester I" / "Sem I" / "2nd
+# Semester", and the extracted PDF text contains stray symbols. The keyword
+# search normalises all of these to tokens like "semester_1", so the exact
+# semester table is found reliably. Both result lists are merged with
+# Reciprocal Rank Fusion.
+# ---------------------------------------------------------------------------
+ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8"}
+ORDINAL_WORDS = {"first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5",
+                 "sixth": "6", "seventh": "7", "eighth": "8", "final": "8"}
+STOPWORDS = {"what", "are", "is", "the", "of", "in", "for", "a", "an", "and", "all", "to", "me",
+             "give", "list", "show", "tell", "about", "which", "there", "any", "provide", "details", "b", "tech"}
+
+
+def _number(token):
+    """'iv' -> '4', 'fourth' -> '4', '4th' -> '4', '4' -> '4', otherwise None."""
+    token = ROMAN.get(token, ORDINAL_WORDS.get(token, token))
+    token = re.sub(r"^(\d+)(st|nd|rd|th)$", r"\1", token)
+    return token if token.isdigit() and len(token) == 1 else None
+
+
+def tokenize(text):
+    words = re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+    tokens = []
+    for i, word in enumerate(words):
+        nxt = words[i + 1] if i + 1 < len(words) else ""
+        prev = words[i - 1] if i > 0 else ""
+        # "semester 1", "Semester I", "Sem IV", "year 2"
+        if word in ("semester", "sem", "year") and _number(nxt):
+            tokens.append(("year_" if word == "year" else "semester_") + _number(nxt))
+        # "first year", "2nd semester", "fourth sem"
+        if nxt in ("semester", "sem", "year") and _number(word) and prev not in ("semester", "sem", "year"):
+            tokens.append(("year_" if nxt == "year" else "semester_") + _number(word))
+        if word not in STOPWORDS:
+            tokens.append(word)
+    return tokens
+
+
+class BM25:
+    def __init__(self, texts, k1=1.5, b=0.75):
+        self.docs = [Counter(tokenize(t)) for t in texts]
+        self.lengths = [sum(c.values()) for c in self.docs]
+        self.avg_len = (sum(self.lengths) / len(self.lengths)) if self.lengths else 1
+        self.k1, self.b = k1, b
+        df = Counter()
+        for counts in self.docs:
+            df.update(counts.keys())
+        n = len(texts)
+        self.idf = {w: math.log(1 + (n - f + 0.5) / (f + 0.5)) for w, f in df.items()}
+
+    def top(self, query, k):
+        q_tokens = tokenize(query)
+        # "first year" in a question also means semesters 1 and 2, etc.
+        for t in list(q_tokens):
+            if t.startswith("year_"):
+                year = int(t[5:])
+                q_tokens += [f"semester_{2 * year - 1}", f"semester_{2 * year}"]
+        scores = []
+        for i, (counts, length) in enumerate(zip(self.docs, self.lengths)):
+            score = 0.0
+            for w in q_tokens:
+                f = counts.get(w)
+                if f:
+                    weight = 3.0 if "_" in w else 1.0  # semester/year matches matter most
+                    score += weight * self.idf[w] * f * (self.k1 + 1) / (
+                        f + self.k1 * (1 - self.b + self.b * length / self.avg_len))
+            if score > 0:
+                scores.append((score, i))
+        scores.sort(reverse=True)
+        return [i for _, i in scores[:k]]
+
+
+@st.cache_resource(show_spinner="Loading course data...", ttl=6 * 3600)
+def load_keyword_index():
+    """Load every chunk stored in Pinecone once and build a keyword index over it."""
+    index = load_index()
+    ids = []
+    for page in index.list():
+        ids.extend(page)
+    docs = []
+    for start in range(0, len(ids), 100):
+        fetched = index.fetch(ids=ids[start:start + 100])
+        for vid, vec in fetched.vectors.items():
+            metadata = dict(vec.metadata or {})
+            text = metadata.pop("text", "")
+            docs.append(Document(id=vid, page_content=text, metadata=metadata))
+
+    # Work out which chunk follows which. Chunks were split with a 150-char
+    # overlap, so the start of chunk N+1 appears at the end of chunk N. This
+    # lets us add the continuation of a table that was cut across two chunks.
+    heads = {}
+    for j, d in enumerate(docs):
+        head = d.page_content.strip()[:60]
+        if len(head) >= 40:
+            heads.setdefault(head, []).append(j)
+    next_chunk = {}
+    for i, d in enumerate(docs):
+        tail = d.page_content[-400:]
+        for head, js in heads.items():
+            if head in tail:
+                for j in js:
+                    if j != i:
+                        next_chunk[d.id] = docs[j]
+    return docs, BM25([d.page_content for d in docs]), next_chunk
+
+
+def retrieve(question, k=12, candidates=30):
+    """Merge embedding and keyword results with Reciprocal Rank Fusion."""
+    dense_docs = vectorstore.similarity_search(question, k=candidates)
+    kw_docs, bm25, next_chunk = load_keyword_index()
+    keyword_docs = [kw_docs[i] for i in bm25.top(question, candidates)]
+
+    scores, by_key = {}, {}
+    for weight, ranked in ((1.0, dense_docs), (1.2, keyword_docs)):
+        for rank, doc in enumerate(ranked):
+            key = doc.id or doc.page_content[:200]
+            by_key.setdefault(key, doc)
+            scores[key] = scores.get(key, 0.0) + weight / (60 + rank)
+    fused = [by_key[key] for key in sorted(scores, key=scores.get, reverse=True)[:k]]
+
+    # Keyword hits are the most precise signal for semester tables, so the top
+    # keyword matches are always kept, followed by the fused results.
+    best = keyword_docs[:6] + fused
+
+    # Add the continuation of the top chunks (e.g. the rest of a semester table)
+    results, seen = [], set()
+    for rank, doc in enumerate(best):
+        for d in (doc, next_chunk.get(doc.id) if rank < 10 else None):
+            if d is not None and (d.id or d.page_content[:200]) not in seen:
+                seen.add(d.id or d.page_content[:200])
+                results.append(d)
+    return results[:20]
 
 # Define the prompt template
 prompt_template = PromptTemplate(
@@ -112,9 +244,15 @@ prompt_template = PromptTemplate(
     Question:
     {question}
 
+    Notes about the context:
+    - It is text extracted from syllabus PDFs, so it may contain stray symbols such as ! ' " $ between words. Ignore them.
+    - Semesters may be written as Roman numerals or ordinals: "Semester I" / "Sem I" / "1st Semester" all mean semester 1, "Semester IV" means semester 4, and so on.
+    - "First year" means semesters 1 and 2, "second year" means semesters 3 and 4, etc.
+    - "Computer Engineering", "CSE", "CE" and "Computer Science & Engineering" refer to the same program.
+
     Follow these steps:
     1. First, identify the specific semester and program mentioned in the question.
-    2. Search the context for an EXACT match of that semester and program.
+    2. Search the context for a match of that semester and program (using the notes above).
     3. If found, list all courses for that specific semester.
     4. If not found, clearly state that the information was not found in the provided context.
     5. Include course codes and names exactly as they appear.
@@ -127,7 +265,7 @@ prompt_template = PromptTemplate(
 
 def run_qa_chain(question):
     """Retrieve relevant chunks and ask the LLM to answer from them."""
-    docs = retriever.invoke(question)  # get_relevant_documents() is deprecated
+    docs = retrieve(question)
     context = "\n\n".join(doc.page_content for doc in docs)
     prompt = prompt_template.format(context=context, question=question)
     response = llm.invoke(prompt)
@@ -176,9 +314,9 @@ def check_rate_limit():
         redis_client.incr(rate_limit_key)
 
 
-def get_source_display(query):
-    """Most common (source, URL) among the top matches, as a markdown link."""
-    search_results = vectorstore.similarity_search(query, k=5)
+def get_source_display(docs):
+    """Most common (source, URL) among the top retrieved chunks, as a markdown link."""
+    search_results = docs[:5]
     source_counts = Counter(
         (doc.metadata.get("source", "Unknown"), doc.metadata.get("source_url", "No URL"))
         for doc in search_results
@@ -253,10 +391,13 @@ if submitted:
 
                 if cached_answer:
                     answer = cached_answer
+                    docs = retrieve(query, k=5)
                 else:
-                    answer = clean_answer(run_qa_chain(query)["result"])
+                    result = run_qa_chain(query)
+                    answer = clean_answer(result["result"])
+                    docs = result["source_documents"]
 
-                source_display = get_source_display(query)
+                source_display = get_source_display(docs)
 
             st.session_state.current = {
                 "question": query,
@@ -270,8 +411,11 @@ if submitted:
         except Exception as e:
             logging.exception("Error while answering query")
             st.session_state.current = None
-            st.error("Sorry, there was an issue processing your query.")
-            st.error(str(e))
+            if "429" in str(e) or "quota" in str(e).lower():
+                st.error("⏳ The AI service is busy right now (free-tier limit reached). Please try again in a minute.")
+            else:
+                st.error("Sorry, there was an issue processing your query.")
+                st.error(str(e))
 
 # Show the latest answer outside the `if submitted` block so it survives the
 # rerun triggered by the rating slider (otherwise rating never gets saved).
