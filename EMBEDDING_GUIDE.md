@@ -1,23 +1,23 @@
 # Embedding Guide
 
-Read this before adding or re-creating embeddings with `app_croq.py`.
-The chatbot (`QA_croq.py`) depends on the settings below, so a mismatch will
+Read this before adding or re-creating embeddings with `app.py`.
+The chatbot (`QA.py`) depends on the settings below, so a mismatch will
 break search or show wrong source links.
 
 ## 1. Settings that must NOT change (unless you rebuild everything)
 
 | Setting | Current value | Why it matters |
 |---|---|---|
-| Embedding model | `intfloat/e5-large-v2` | `QA_croq.py` embeds questions with the same model. Different models produce incompatible vectors. |
+| Embedding model | `intfloat/e5-large-v2` | `QA.py` embeds questions with the same model. Different models produce incompatible vectors. |
 | Vector dimension | `1024` | Fixed when the Pinecone index is created. |
 | Similarity metric | `cosine` | Fixed when the Pinecone index is created. |
 | Index name | `course-database` | Hard-coded in both files. |
 | `normalize_embeddings` | `True` | Keep it identical in both files. |
-| Text metadata key | `text` | `QA_croq.py` reads the chunk text from `metadata["text"]`. |
+| Text metadata key | `text` | `QA.py` reads the chunk text from `metadata["text"]`. |
 
 If you ever switch the embedding model, create a **new index** with the new
 model's dimension, re-embed **all** PDFs into it, and update `EMBEDDING_MODEL`
-and `INDEX_NAME` in `QA_croq.py`.
+and `INDEX_NAME` in `QA.py`.
 
 ## 2. Metadata stored today
 
@@ -36,11 +36,11 @@ Mechanical Engineering, Electronics & Communication Engineering).
 
 ## 3. Metadata to add for future embeddings
 
-Add these fields in the `doc.metadata = {...}` block of `app_croq.py`:
+Add these fields in the `doc.metadata = {...}` block of `app.py`:
 
 ```python
 doc.metadata = {
-    # --- required (used by QA_croq.py today) ---
+    # --- required (used by QA.py today) ---
     "text": doc.page_content,
     "source": "B.Tech Mechanical Engineering Course Structure",
     "source_url": web_url,
@@ -76,7 +76,7 @@ What each recommended field enables:
 Pinecone metadata values must be strings, numbers, booleans or lists of strings,
 and the whole metadata for one chunk must stay under 40 KB.
 
-## 4. Changes needed in `app_croq.py` for this
+## 4. Changes needed in `app.py` for this
 
 1. **Keep page numbers.** Today all pages are joined into one string, so page
    information is lost. Create one `Document` per page instead:
@@ -106,11 +106,11 @@ and the whole metadata for one chunk must stay under 40 KB.
 5. **Set `source` and `web_url` per PDF.** They are hard-coded for the
    Mechanical PDF; update both for every PDF you embed.
 
-## 5. Things QA_croq.py expects
+## 5. Things QA.py expects
 
 - The `source` name must contain **Computer**, **Mechanical** or
   **Electronics**: the source link is chosen by matching these words with
-  the program in the question (`PROGRAM_PATTERNS` in `QA_croq.py`).
+  the program in the question (`PROGRAM_PATTERNS` in `QA.py`).
 - **Adding a new program** (e.g. Civil): use a `source` name containing
   "Civil" and add an entry to `PROGRAM_PATTERNS`, for example
   `"Civil": r"\bcivil\b"`.
@@ -119,13 +119,13 @@ and the whole metadata for one chunk must stay under 40 KB.
   restart it locally) to use them straight away.
 - e5 models work best with `"passage: "` before stored text and `"query: "`
   before questions. If you start adding the `passage: ` prefix, re-embed **all**
-  PDFs and also add the `query: ` prefix in `QA_croq.py`; never mix the two styles.
+  PDFs and also add the `query: ` prefix in `QA.py`; never mix the two styles.
 
 ## 6. Checklist for adding a new PDF
 
 1. Put the PDF in `Revised Syllabus/` and upload it to Drive (or GitHub) for the link.
-2. In `app_croq.py`, set `source`, `web_url` and the new metadata fields.
-3. Run `python app_croq.py "Revised Syllabus/<File>.pdf"`.
+2. In `app.py`, set `source`, `web_url` and the new metadata fields.
+3. Run `python app.py "Revised Syllabus/<File>.pdf"`.
 4. Check the vector count in the Pinecone console went up as expected.
 5. Reboot the Streamlit app and ask a question about the new PDF.
 6. Check the answer and the source link.

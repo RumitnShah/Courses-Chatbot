@@ -21,7 +21,7 @@ pc = Pinecone(
 )
 
 # Path to the PDF file containing course syllabus
-# Usage: python app_croq.py "Revised Syllabus/Mechanical.pdf"
+# Usage: python app.py "Revised Syllabus/Mechanical.pdf"
 pdf_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join("Revised Syllabus", "Mechanical.pdf")
 if not os.path.exists(pdf_path):
     raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -61,7 +61,7 @@ for doc in texts:
     documents_with_sources.append(doc)
 
 # Initialize embeddings model for vectorization
-# Must be the same model (and settings) as in QA_croq.py; 1024 dimensions
+# Must be the same model (and settings) as in QA.py; 1024 dimensions
 embeddings = HuggingFaceEmbeddings(
     model_name="intfloat/e5-large-v2",
     model_kwargs={"device": "cpu"},

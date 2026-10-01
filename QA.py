@@ -35,7 +35,7 @@ def get_secret(name, default=None):
 
 
 # Embedding model used to build the Pinecone index (1024 dimensions).
-# It MUST stay the same as the model used in app_croq.py, otherwise the
+# It MUST stay the same as the model used in app.py, otherwise the
 # query vectors will not match the stored vectors.
 EMBEDDING_MODEL = "intfloat/e5-large-v2"
 INDEX_NAME = "course-database"

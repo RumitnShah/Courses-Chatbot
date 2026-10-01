@@ -44,11 +44,11 @@ pip install -r requirements.txt
 1. Embedding PDFs into Pinecone
 - Run the following script to process and embed a course PDF (pass the PDF path):
 ```bash
-python app_croq.py "Revised Syllabus/Mechanical.pdf"
+python app.py "Revised Syllabus/Mechanical.pdf"
 ```
 - Create the account on Pinecone and get the API key.
 
-- Set ```web_url``` and the ```source``` name in ```app_croq.py``` for each PDF before running it.
+- Set ```web_url``` and the ```source``` name in ```app.py``` for each PDF before running it.
 - Read [EMBEDDING_GUIDE.md](EMBEDDING_GUIDE.md) before creating new embeddings.
 - Ensure metadata includes relevant details like source URL:
 ```bash
@@ -57,7 +57,7 @@ doc.metadata = {"source": pdf_path, "source_url": web_url}
 2. Running the Chatbot Locally
 - Launch the chatbot with Streamlit:
 ```bash
-streamlit run QA_croq.py
+streamlit run QA.py
 ```
 - Get a Gemini API key from Google AI Studio.
 
