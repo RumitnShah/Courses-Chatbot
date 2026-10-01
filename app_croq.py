@@ -1,9 +1,10 @@
 import os
+import sys
 from PyPDF2 import PdfReader
-from langchain.schema import Document
+from langchain_core.documents import Document
 from dotenv import load_dotenv
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Pinecone as LangchainPinecone
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -13,8 +14,6 @@ load_dotenv()
 # Ensure necessary API keys are set
 if "PINECONE_API_KEY" not in os.environ:
     raise ValueError("Please set PINECONE_API_KEY in your .env file")
-if "GROQ_API_KEY" not in os.environ:
-    raise ValueError("Please set GROQ_API_KEY in your .env file")
 
 # Initialize Pinecone client
 pc = Pinecone(
@@ -22,7 +21,10 @@ pc = Pinecone(
 )
 
 # Path to the PDF file containing course syllabus
-pdf_path = r"C:\Users\Administrator\OneDrive\Documents\GitHub\Courses-Chatbot\Revised Syllabus\Mechanical.pdf"
+# Usage: python app_croq.py "Revised Syllabus/Mechanical.pdf"
+pdf_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join("Revised Syllabus", "Mechanical.pdf")
+if not os.path.exists(pdf_path):
+    raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
 # Read the PDF file
 pdf_reader = PdfReader(pdf_path)
@@ -59,7 +61,12 @@ for doc in texts:
     documents_with_sources.append(doc)
 
 # Initialize embeddings model for vectorization
-embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
+# Must be the same model (and settings) as in QA_croq.py; 1024 dimensions
+embeddings = HuggingFaceEmbeddings(
+    model_name="intfloat/e5-large-v2",
+    model_kwargs={"device": "cpu"},
+    encode_kwargs={"normalize_embeddings": True},
+)
 
 # Create or get existing index
 index_name = "course-database"
@@ -79,10 +86,11 @@ if index_name not in existing_indexes:  # Create a new Pinecone index if not pre
 index = pc.Index(index_name)
 
 # Initialize Pinecone vector store with the processed documents
-vectorstore = LangchainPinecone.from_documents(
+vectorstore = PineconeVectorStore.from_documents(
     documents_with_sources,
     embedding=embeddings,
-    index_name=index_name
+    index_name=index_name,
+    text_key="text",
 )
 
 print("Embeddings added to Pinecone")

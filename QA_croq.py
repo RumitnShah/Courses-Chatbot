@@ -1,68 +1,103 @@
-from langchain_pinecone import PineconeVectorStore
-from pinecone import Pinecone
 import os
-from dotenv import load_dotenv
-import logging
-from langchain.prompts import PromptTemplate
-from langchain_huggingface import HuggingFaceEmbeddings
-import streamlit as st
 import re
-import redis
-import socket
 import random
+import logging
 from collections import Counter
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 
-# Load environment variables from .env file
+import redis
+import streamlit as st
+from dotenv import load_dotenv
+from pinecone import Pinecone
+from langchain_core.prompts import PromptTemplate
+from langchain_pinecone import PineconeVectorStore
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+# Load environment variables from .env file (locally) and Streamlit secrets (on Streamlit Cloud)
 load_dotenv(override=True)
 
-# Initialize Pinecone connection using API key
-pc = Pinecone(api_key=os.environ['PINECONE_API_KEY'])
 
-# Load Redis connection details from environment variables
-host = os.environ.get("REDIS_HOST")
-port = os.environ.get("REDIS_PORT")
-password = os.environ.get("REDIS_PASSWORD")
+def get_secret(name, default=None):
+    """Read a setting from the environment, falling back to Streamlit secrets."""
+    value = os.environ.get(name)
+    if value:
+        return value
+    try:
+        # Only touch st.secrets when a secrets.toml exists; otherwise Streamlit
+        # shows a "No secrets found" error box on the page.
+        if st.secrets.load_if_toml_exists() and name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+    return default
 
-# Initialize Redis client for caching and rate-limiting
-redis_client = redis.Redis(
-    host=host, port=port, password=password, decode_responses=True
-)
 
-# Connect to the Pinecone index
-index = pc.Index("course-database")
+# Embedding model used to build the Pinecone index (1024 dimensions).
+# It MUST stay the same as the model used in app_croq.py, otherwise the
+# query vectors will not match the stored vectors.
+EMBEDDING_MODEL = "intfloat/e5-large-v2"
+INDEX_NAME = "course-database"
+GEMINI_MODEL = get_secret("GEMINI_MODEL", "gemini-3.6-flash")
 
-# Initialize embeddings model for vector search
-# Keep the original higher-dimensional model to match a 1024-dimension Pinecone index.
-embeddings = HuggingFaceEmbeddings(model_name="intfloat/e5-large-v2")
 
-# Create a vector store instance using Pinecone
-vectorstore = PineconeVectorStore(
-    index=index,
-    embedding=embeddings,
-    text_key="text"
-)
+# ---------------------------------------------------------------------------
+# Heavy resources are created ONCE per server process with st.cache_resource.
+# Without this, Streamlit re-runs the whole script on every click (including
+# moving the rating slider) and reloads the ~1.3 GB embedding model each time,
+# which exhausts memory and crashes the app on Streamlit Cloud.
+# ---------------------------------------------------------------------------
+@st.cache_resource(show_spinner="Loading embedding model (first run only)...")
+def load_embeddings():
+    return HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def load_vectorstore():
+    pinecone_api_key = get_secret("PINECONE_API_KEY")
+    if not pinecone_api_key:
+        raise ValueError("PINECONE_API_KEY not found in .env file or Streamlit secrets")
+    pc = Pinecone(api_key=pinecone_api_key)
+    index = pc.Index(INDEX_NAME)
+    return PineconeVectorStore(index=index, embedding=load_embeddings(), text_key="text")
+
+
+@st.cache_resource(show_spinner=False)
+def load_llm():
+    gemini_api_key = get_secret("GEMINI_API_KEY")
+    if not gemini_api_key:
+        raise ValueError("GEMINI_API_KEY not found in .env file or Streamlit secrets")
+    return ChatGoogleGenerativeAI(
+        model=GEMINI_MODEL,
+        temperature=0.3,
+        api_key=gemini_api_key,
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def load_redis():
+    return redis.Redis(
+        host=get_secret("REDIS_HOST"),
+        port=int(get_secret("REDIS_PORT", 6379)),
+        password=get_secret("REDIS_PASSWORD"),
+        decode_responses=True,
+    )
+
+
+vectorstore = load_vectorstore()
+llm = load_llm()
+redis_client = load_redis()
 
 # Set up retriever with MMR (Maximal Marginal Relevance) search
 retriever = vectorstore.as_retriever(
-    search_type="mmr", 
+    search_type="mmr",
     search_kwargs={
-        "k": 15,    # Number of documents to fetch
+        "k": 15,            # Number of documents to fetch
         "lambda_mult": 0.9  # Lower lambda_mult for more diverse results
     }
-)
-
-# Initialize LLM model using Google Gemini API
-gemini_api_key = os.environ.get("GEMINI_API_KEY")
-if not gemini_api_key:
-    raise ValueError("❌ GEMINI_API_KEY not found in .env file")
-
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",
-    temperature=0.3,
-    api_key=gemini_api_key
 )
 
 # Define the prompt template
@@ -89,80 +124,93 @@ prompt_template = PromptTemplate(
     input_variables=["context", "question"]
 )
 
-# Create a custom chain function that mimics RetrievalQA behavior
+
 def run_qa_chain(question):
-    """Run QA chain with document retrieval"""
-    # Retrieve documents
-    docs = retriever.get_relevant_documents(question)
-    # Format context from documents
-    context = "\n\n".join([doc.page_content for doc in docs])
-    # Create the prompt
+    """Retrieve relevant chunks and ask the LLM to answer from them."""
+    docs = retriever.invoke(question)  # get_relevant_documents() is deprecated
+    context = "\n\n".join(doc.page_content for doc in docs)
     prompt = prompt_template.format(context=context, question=question)
-    # Get response from LLM
     response = llm.invoke(prompt)
-    # Return result in RetrievalQA format
     return {
-        "result": response.content if hasattr(response, 'content') else str(response),
-        "source_documents": docs
+        "result": response.content if hasattr(response, "content") else str(response),
+        "source_documents": docs,
     }
 
-# Create a wrapper object that mimics qa.invoke()
-class QAChain:
-    def invoke(self, query):
-        return run_qa_chain(query)
 
-qa = QAChain()
+def clean_answer(answer):
+    # Remove the thinking part (anything between <think> and </think>)
+    answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL)
+    return (
+        answer.replace("{", "")
+        .replace("}", "")
+        .replace('"', "")
+        .replace("\\n", "\n")
+        .strip()
+    )
 
-# Set up the Streamlit UI
+
+def get_ip():
+    """Best-effort client IP (falls back to a shared key when unavailable)."""
+    try:
+        headers = st.context.headers
+        forwarded = headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return headers.get("X-Real-Ip") or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def check_rate_limit():
+    """Stop the app if this user has hit the daily query limit."""
+    MAX_REQUESTS_PER_DAY = 200
+    rate_limit_key = f"rate_limit_{get_ip()}"
+    request_count = redis_client.get(rate_limit_key)
+
+    if request_count is None:
+        redis_client.set(rate_limit_key, 1, ex=86400)  # 1 day expiry
+    else:
+        if int(request_count) >= MAX_REQUESTS_PER_DAY:
+            st.error("🚨 You have exceeded the daily query limit. Please try again tomorrow.")
+            st.stop()
+        redis_client.incr(rate_limit_key)
+
+
+def get_source_display(query):
+    """Most common (source, URL) among the top matches, as a markdown link."""
+    search_results = vectorstore.similarity_search(query, k=5)
+    source_counts = Counter(
+        (doc.metadata.get("source", "Unknown"), doc.metadata.get("source_url", "No URL"))
+        for doc in search_results
+    )
+    if not source_counts:
+        return "- No source available."
+    (source, url), _ = source_counts.most_common(1)[0]
+    return f"- Source PDF: [{source}]({url})"
+
+
+# ----------------------------- Streamlit UI --------------------------------
 st.title("PDEU Courses Chatbot 🤖")
 
-# Display author and GitHub link
 description = """Crafted with care by [Rumit Shah](https://www.linkedin.com/in/rumit-shah-537076303?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app) 💙. Explore the magic on [Github](https://github.com/RumitnShah/Courses-Chatbot/tree/main)"""
 st.markdown(description, unsafe_allow_html=True)
 
-# Display important security notice
 st.markdown("""
 🚨 **Important Notice:**
 
-For security and privacy, avoid using public WiFi while chatting with this bot. 
+For security and privacy, avoid using public WiFi while chatting with this bot.
 - Public networks share IPs, affecting rate limits and data security.
 
 **Recommendation**: Use a personal or secure mobile network for the best experience. 🔒✅
 """, unsafe_allow_html=True)
 
-# Initialize session state for storing previous questions and answers
+# Session state: history of Q&A and the latest answer (kept across reruns)
 if "qa_history" not in st.session_state:
     st.session_state.qa_history = []
+if "current" not in st.session_state:
+    st.session_state.current = None
 
-# Function to get user's IP address
-def get_ip():
-    try:
-        return socket.gethostbyname(socket.gethostname())  # Local network IP
-    except:
-        return "IP Address not available"
-
-
-# Function to check rate limit per user
-def check_rate_limit():
-    user_ip = get_ip()
-    rate_limit_key = f"rate_limit_{user_ip}"
-    request_count = redis_client.get(rate_limit_key)
-
-    MAX_REQUESTS_PER_DAY = 200  # Set the daily query limit
-
-    if request_count is None:
-        redis_client.set(rate_limit_key, 1, ex=86400)  # 1 day expiry
-    else:
-        request_count = int(request_count)
-        if request_count >= MAX_REQUESTS_PER_DAY:
-            st.error("🚨 You have exceeded the daily query limit. Please try again tomorrow.")
-            st.stop()
-        redis_client.incr(rate_limit_key)
-
-# Define the user input form
 with st.form("my_form"):
-
-    # Predefined questions for quick selection
     questions = [
         "Formulate your own question below",
         "What are the courses in Computer Science and Engineering semester 1?",
@@ -172,123 +220,83 @@ with st.form("my_form"):
         "What are all the courses for Mechanical Engineering semester 4?",
         "What are the details of Electronics Devices and Circuits course?"
     ]
-    
-    selected_question = st.selectbox(
-        "Select your question:",
-        questions,
-        label_visibility="visible"
-    )
 
-    st.markdown(
-        "<p style='text-align: center; font-size: 13px'>"
-        "OR"
-        "</p>",
-        unsafe_allow_html=True
-    )
+    selected_question = st.selectbox("Select your question:", questions, label_visibility="visible")
 
-    # Allow user to enter custom question
+    st.markdown("<p style='text-align: center; font-size: 13px'>OR</p>", unsafe_allow_html=True)
+
     custom_question = st.text_area(
         "Enter your query here:",
         placeholder="Enter your custom question here...",
-        disabled=selected_question != "Formulate your own question below"
     )
-    st.caption("Reload the page to write a custom question if disabled.")
+    st.caption("A custom question is used when 'Formulate your own question below' is selected.")
     submitted = st.form_submit_button("Submit")
 
-# Read funny loading messages from a file
-with open("loading_messages.txt", "r") as f:
-    loading_messages = f.readlines()
+with open("loading_messages.txt", "r", encoding="utf-8") as f:
+    loading_messages = [line.strip() for line in f if line.strip()]
 
-if submitted: 
-    try: 
-        loading_message = random.choice(loading_messages)
-        # Adding loading message
-        with st.spinner(text=loading_message):
+if submitted:
+    if selected_question == "Formulate your own question below":
+        query = custom_question.strip()
+    else:
+        query = selected_question
 
-            check_rate_limit()  # Check user's rate limit  
-            if selected_question == "Formulate your own question below":
-                if custom_question.strip():  # Check if custom question is not empty
-                    query = custom_question
+    if not query:
+        st.error("Please either select a question or write your own")
+    else:
+        try:
+            with st.spinner(text=random.choice(loading_messages)):
+                check_rate_limit()
+
+                redis_key = f"query:{query}"
+                cached_answer = redis_client.get(redis_key)
+
+                if cached_answer:
+                    answer = cached_answer
                 else:
-                    st.error("Please either select a question or write your own")
-            else:
-                query = selected_question
+                    answer = clean_answer(run_qa_chain(query)["result"])
 
-            # Check Redis cache for previous answer
-            redis_key = f"query:{query}"
-            cached_answer = redis_client.get(redis_key)
-            
-            if cached_answer:
-                answer = cached_answer
-            else:
-                result = qa.invoke(query)
+                source_display = get_source_display(query)
 
-                # Extract and clean the answer
-                if isinstance(result, dict):
-                    answer = result.get('result', '')
-                elif isinstance(result, str):
-                    answer = result
-                else:
-                    answer = str(result)
+            st.session_state.current = {
+                "question": query,
+                "answer": answer,
+                "sources": source_display,
+                "cached": bool(cached_answer),
+            }
+            st.session_state.qa_history.append(
+                {"question": query, "answer": answer, "sources": source_display}
+            )
+        except Exception as e:
+            logging.exception("Error while answering query")
+            st.session_state.current = None
+            st.error("Sorry, there was an issue processing your query.")
+            st.error(str(e))
 
-                # Remove the thinking part (anything between <think> and </think>)
-                answer = re.sub(r'<think>.*?</think>', '', answer, flags=re.DOTALL)
-                answer = (
-                    answer.replace('{', '') # Remove JSON formatting characters
-                    .replace('}', '')   
-                    .replace('"', '')      
-                    .replace('\\n', '\n')  # Convert literal \n to actual newlines
-                    .strip()
-                )
+# Show the latest answer outside the `if submitted` block so it survives the
+# rerun triggered by the rating slider (otherwise rating never gets saved).
+current = st.session_state.current
+if current:
+    st.write("Answer:")
+    st.markdown(current["answer"])
+    st.markdown(current["sources"], unsafe_allow_html=True)
 
-        # Display the clean answer
-        if answer:
-            st.write("Answer:")
-            # Using markdown to properly render newlines
-            st.markdown(answer)
+    answer_rating = st.slider("**Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10, 5)
 
-        # Perform similarity search
-        search_results = vectorstore.similarity_search(query, k=5)  # Get top 5 search results
+    # Cache answer in Redis if rating is above 7
+    if answer_rating > 7 and not current["cached"]:
+        redis_client.set(f"query:{current['question']}", current["answer"], ex=604800)  # 7 days
+        current["cached"] = True
+        st.success("Thanks! This answer will be reused for the same question.")
 
-        # Extract sources and count occurrences
-        source_counts = Counter((doc.metadata.get('source', 'Unknown'), doc.metadata.get('source_url', 'No URL')) 
-                        for doc in search_results)
-
-        # Get the most common (source, URL) pair
-        if source_counts:
-            (most_common_source, most_common_url), _ = source_counts.most_common(1)[0]  # Unpacking the most frequent tuple
-
-            # Markdown format for hyperlink
-            source_display = f"- Source PDF: [{most_common_source}]({most_common_url})"
-            st.markdown(source_display, unsafe_allow_html=True)  # Display hyperlink
-        else:
-            st.markdown("- No source available.")
-
-        if query != "Formulate your own question below":
-            st.session_state.qa_history.append({"question": query, "answer": answer, "sources": source_display})
-
-        # User rates the answer
-        answer_ratings = st.slider("**Rate the provided answer {1=Worst, 10=Excellent}**", 1, 10)
-
-        # Cache answer in Redis if rating is above 7
-        if answer_ratings > 7 and not cached_answer:
-            redis_client.set(redis_key, answer, ex=604800)  # Cache for 7 days
-
-        st.write("⚠️ **Note:** AI can sometimes provide wrong answers. Please verify from the provided source.")
-            
-    except Exception as e:
-        logging.error(f"Embedding generation error: {e}")
-        st.error("Sorry, there was an issue processing your query.")
-        st.error(str(e))
+    st.write("⚠️ **Note:** AI can sometimes provide wrong answers. Please verify from the provided source.")
 
 if st.session_state.qa_history:
-    # Display all previous questions and answers
     st.write("### Previous Questions and Answers")
     for qa_pair in st.session_state.qa_history:
         st.write(f"🤖 **Question:** {qa_pair['question']}")
         st.write(f"✨ **Answer:** {qa_pair['answer']}")
         st.write(f"📚 {qa_pair['sources']}")
         st.markdown("-----------------------------")
-
 else:
     st.write("##### No previous questions and answers to display.")
