@@ -314,12 +314,52 @@ def check_rate_limit():
         redis_client.incr(rate_limit_key)
 
 
-def get_source_display(docs):
-    """Most common (source, URL) among the top retrieved chunks, as a markdown link."""
-    search_results = docs[:5]
+# Words that identify each program in a question or answer, mapped to a word
+# that appears in that program's "source" name stored in Pinecone.
+PROGRAM_PATTERNS = {
+    "Computer": r"\bcomputer\b|\bcse\b|\bcs\b|\bce\b|\bcomp\b",
+    "Mechanical": r"\bmechanical\b|\bmech\b",
+    "Electronics": r"\belectronics?\b|\bece\b|\bec\b|\bcommunication engineering\b",
+}
+
+
+def detect_programs(text):
+    """Programs mentioned in the text, in the order they first appear."""
+    found = []
+    for program, pattern in PROGRAM_PATTERNS.items():
+        m = re.search(pattern, text or "", re.IGNORECASE)
+        if m:
+            found.append((m.start(), program))
+    return [program for _, program in sorted(found)]
+
+
+def get_source_display(question, answer, docs):
+    """Link to the syllabus PDF of the program the user asked about.
+
+    1. Program named in the question (most reliable).
+    2. Otherwise the program named in the answer.
+    3. Otherwise the most common source among the top retrieved chunks.
+    """
+    # Every (source name -> URL) pair stored with the chunks in Pinecone
+    all_docs, _, _ = load_keyword_index()
+    source_urls = {}
+    for d in all_docs:
+        name, url = d.metadata.get("source"), d.metadata.get("source_url")
+        if name and url:
+            source_urls.setdefault(name, url)
+
+    programs = detect_programs(question) or detect_programs(answer)[:1]
+    links = []
+    for program in programs:
+        for name, url in source_urls.items():
+            if program.lower() in name.lower() and (name, url) not in links:
+                links.append((name, url))
+    if links:
+        return "\n".join(f"- Source PDF: [{name}]({url})" for name, url in links)
+
     source_counts = Counter(
         (doc.metadata.get("source", "Unknown"), doc.metadata.get("source_url", "No URL"))
-        for doc in search_results
+        for doc in docs[:5]
     )
     if not source_counts:
         return "- No source available."
@@ -397,7 +437,7 @@ if submitted:
                     answer = clean_answer(result["result"])
                     docs = result["source_documents"]
 
-                source_display = get_source_display(docs)
+                source_display = get_source_display(query, answer, docs)
 
             st.session_state.current = {
                 "question": query,
